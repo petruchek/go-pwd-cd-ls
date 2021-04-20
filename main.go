@@ -45,7 +45,7 @@ func cd(w http.ResponseWriter, r *http.Request) {
 }
 
 func ls(w http.ResponseWriter, r *http.Request) {
-	dir, err := getParam(r, "dir")
+	dir, err := os.Getwd()
 	if err != nil {
 		log.Fatal(err)
 		return
