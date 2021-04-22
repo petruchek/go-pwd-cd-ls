@@ -3,79 +3,103 @@ package main
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"github.com/gorilla/sessions"
 )
 
-func getParam(r *http.Request, param string) (string, error) {
-	values, ok := r.URL.Query()[param]
+var store = sessions.NewCookieStore([]byte("v3ry-t0p_s3cr3t"))
 
-	if !ok || len(values[0]) < 1 {
-		return "", errors.New(fmt.Sprintf("Url Param '%s' is missing", param))
+func getWorkingDirectory(session *sessions.Session) (string, error) {
+	untyped, ok := session.Values["directory"]
+	if !ok {
+		default_directory, err := os.Getwd()
+		if err != nil {
+			return "", err
+		}
+		return default_directory, nil;
+	} else {
+		directory, ok := untyped.(string)
+		if !ok {
+			return "", errors.New("Directory is not a string?")
+		}
+		return directory, nil;
 	}
-
-	return values[0], nil
 }
 
-func pwd(w http.ResponseWriter, r *http.Request) {
-	dir, err := os.Getwd()
+func handlePwdRequest(w http.ResponseWriter, r *http.Request) {
+	session, _ := store.Get(r, "session")
+	directory, err := getWorkingDirectory(session)
 	if err != nil {
-		log.Fatal(err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	json.NewEncoder(w).Encode(dir)
+	w.Write([]byte(directory))
 }
 
-func cd(w http.ResponseWriter, r *http.Request) {
-	dir, err := getParam(r, "dir")
+func handleCdRequest(w http.ResponseWriter, r *http.Request) {
+	session, _ := store.Get(r, "session")
+
+	dir := r.URL.Query().Get("dir")
+	if dir == "" {
+        http.Error(w, "Missing <dir> param", 400)
+        return
+	}
+
+	directory, err := getWorkingDirectory(session)
 	if err != nil {
-		log.Fatal(err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	os.Chdir(dir)
-	newDir, err := os.Getwd()
+	err = os.Chdir(directory)
 	if err != nil {
-		log.Fatal(err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	json.NewEncoder(w).Encode(newDir)
+	
+	err = os.Chdir(dir)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	current_directory, err := os.Getwd()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+	
+	session.Values["directory"] = current_directory
+	session.Save(r, w)
+	w.Write([]byte(current_directory))
 }
 
-func ls(w http.ResponseWriter, r *http.Request) {
-	dir, err := os.Getwd()
+func handleLsRequest(w http.ResponseWriter, r *http.Request) {
+	session, _ := store.Get(r, "session")
+	directory, err := getWorkingDirectory(session)
 	if err != nil {
-		log.Fatal(err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	f, err := os.Open(dir)
+	files, err := os.ReadDir(directory)
 	if err != nil {
-		log.Fatal(err)
-		return
-	}
-
-	files, err := f.Readdir(-1)
-	f.Close()
-	if err != nil {
-		log.Fatal(err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	var filenames []string
 	for _, file := range files {
 		filenames = append(filenames, file.Name())
-		fmt.Println(file.Name())
 	}
 	json.NewEncoder(w).Encode(filenames)
 }
 
 func handleRequests() {
-	http.HandleFunc("/ls", ls)
-	http.HandleFunc("/pwd", pwd)
-	http.HandleFunc("/cd", cd)
+	http.HandleFunc("/ls", handleLsRequest)
+	http.HandleFunc("/pwd", handlePwdRequest)
+	http.HandleFunc("/cd", handleCdRequest)
 	log.Fatal(http.ListenAndServe(":8081", nil))
 }
 
